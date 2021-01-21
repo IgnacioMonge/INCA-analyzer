@@ -6,3 +6,6 @@ This script calculates the usual parameters derived from the PV analysis: Ees (a
 
 Please, consider that I am not an engineer, I'm a dedicated physician to critical care patients with a deep pasion for physiology.
 
+Load the script and run it in Matlab, select Example.csv for testing and check the results. Look inside the code for more variables and calculations.
+
+Feel free to contribute to the code. Email me at: ignaciomonge@gmail.com.
