@@ -184,20 +184,24 @@ Vw = coef_PRSW(2);
 % ED_pressure_max = ED_pressure (inflection_point(end)-1:end);
 % t_ED_max = t_end_diastole (inflection_point(end)-1:end);
 
-% Calculation of EDPVR fit
-[fitresult_EDPVR, gof] = createFit (EDV_cycles,EDP_cycles);
-% [fitresult_EDPVR, gof] = createFit(ED_volume_max, ED_pressure_max);
+%% Calculation of EDPVR fit
+dur_cycle = linspace(1,cycle,cycle);
+[~,edpvr_outliers1] = rmoutliers(EDV_cycles,'movmedian',3,'SamplePoints',dur_cycle);
+[~,edpvr_outliers2] = rmoutliers(EDP_cycles,'movmedian',3,'SamplePoints',dur_cycle);
+EDV_cycles_processed = EDV_cycles(~edpvr_outliers1 & ~edpvr_outliers2);
+EDP_cycles_processed = EDP_cycles(~edpvr_outliers1 & ~edpvr_outliers2);
+[fitresult_EDPVR, gof] = createFit(EDV_cycles_processed, EDP_cycles_processed);
 coeffvals_EDPVR= coeffvalues(fitresult_EDPVR);
 beta_index = coeffvals_EDPVR(2);
- 
-%% post-hoc analysis if beta-index is negative (usually due to an outlier not detected by the fitting algorithm)
-if beta_index < 0
-    ED_stiffness = EDV_cycles./EDP_cycles;
-    [~,stiffness_outliers] = rmoutliers(ED_stiffness,'mean','ThresholdFactor',1);
-    % recalculate EDVPR with the new values
-    [fitresult_EDPVR, gof] = createFit(EDV_cycles(~stiffness_outliers), EDP_cycles(~stiffness_outliers));
-    coeffvals_EDPVR= coeffvalues(fitresult_EDPVR);
-    beta_index = coeffvals_EDPVR(2);
+rsquare_EDPVR = gof.rsquare;
+
+if beta_index < 0 | rsquare_EDPVR < 0.8 % recheck out extreme outliers when Beta < 0 or with poor fits
+ compliance_check  = EDV_cycles_processed./EDP_cycles_processed;
+[~,outlier_compliance] = rmoutliers(compliance_check,'percentiles',[5 95]);
+[fitresult_EDPVR, gof] = createFit(EDV_cycles_processed(~outlier_compliance), EDP_cycles_processed(~outlier_compliance));
+coeffvals_EDPVR= coeffvalues(fitresult_EDPVR);
+beta_index = coeffvals_EDPVR(2);
+rsquare_EDPVR = gof.rsquare;
 end
     
 %% PV-LOOP ANALYSIS
@@ -683,17 +687,17 @@ txt = ['Tau (Logistic): ' num2str(tau_Logistic)];
 text(tau_pressure_line(end),min(tau_dPdt),txt);
 
 
-function [fitresult, gof] = createFit(ED_volume_max, ED_pressure_max)
+function [fitresult, gof] = createFit(EDV_cycles, EDP_cycles)
 %% Fit: 'EDPVR FIT'.
-[xData, yData] = prepareCurveData( ED_volume_max, ED_pressure_max );
-[~,outlier] = rmoutliers(ED_pressure_max,'gesd','ThresholdFactor',0.3);
+[xData, yData] = prepareCurveData( EDV_cycles, EDP_cycles );
 ft = fittype( 'y0+A*exp(B*x)');
-opts = fitoptions( 'Method', 'NonlinearLeastSquares','Exclude', outlier );
+opts = fitoptions( 'Method', 'NonlinearLeastSquares');
 opts.Algorithm = 'Levenberg-Marquardt';
 opts.Display = 'Off';
-opts.StartPoint = [0 0.0567837103186079 0];
+ops.Robust = 'LAR';
+opts.StartPoint = [0 0.02 0];
 [fitresult, gof] = fit( xData, yData, ft, opts );
- end
+end
 
  function [fitresult, gof] = createFit2(ES_volume, ES_pressure)
 [xData, yData] = prepareCurveData( ES_volume, ES_pressure );
