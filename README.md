@@ -10,5 +10,5 @@ Load the script and run it in Matlab, select Example.csv for testing and check t
 
 Feel free to contribute to the code. Email me at: ignaciomonge@gmail.com.
 
-![PV loops](../INCAanalyzer_web/Figures/PVloop.png)
+![PV loops](../INCAnalyzer_web/Figures/PVloop.png)
 Format: ![Alt Text](url)
