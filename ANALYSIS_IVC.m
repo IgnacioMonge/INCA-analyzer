@@ -142,7 +142,7 @@ timeline_cycles = timeline_cycles(timeline_cycles~=0)';
 EDV_cycles (cycle) = volume_cycles(end);
 EDP_cycles (cycle) = pressure_cycles(end);
 tED_cycles (cycle) = timeline_cycles(end);
-[max_elastance,Emax_cycles_idx] = max(elastances_cycles);
+[max_elastance(cycle),Emax_cycles_idx] = max(elastances_cycles);
 t_Ees_max (cycle) = timeline_cycles(Emax_cycles_idx);
 ESP_cycles (cycle) = pressure_cycles(Emax_cycles_idx);
 ESV_cycles (cycle) = volume_cycles(Emax_cycles_idx);
@@ -612,8 +612,7 @@ subplot(4,1,2)
     title ('LV Pressure');
     plot (tt1_interp,pressure_INCA,'r')
     hold on
-    plot(tED_cycles,EDV_cycles,'*k');hold on;
-    plot(tED_cycles,EDP_cycles,'*g');hold on;
+    plot(t_Ees_max,ESP_cycles,'*g');hold on;
     plot(t_systolicpressure,systolic_pressure,'*b');
 subplot (4,1,3)
 axis tight;
@@ -621,7 +620,6 @@ axis tight;
     title ('LV Volume');
     plot (tt1_interp,volume_INCA)
     hold on
-    plot(t_Ees_max,SW_cycles,'*k');hold on;
     plot(tED_cycles,EDV_cycles,'*g');
 subplot(4,1,4)
     axis tight;
