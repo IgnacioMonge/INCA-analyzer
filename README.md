@@ -16,11 +16,7 @@ Some examples of the graphical output.
 
 ![PV loops](docs/figures/PVloops.png)
 
-![Single PV loop with characteristic points](docs/figures/PVloop.png)
-
 ![Single beat EES calculation](docs/figures/EESsb.png)
-
-![LV filling analysis](docs/figures/LVfilling.png)
 
 ![Diastolic function: tau calculations (four methods)](docs/figures/taudiastolic.png)
 
