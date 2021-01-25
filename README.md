@@ -10,4 +10,17 @@ Load the script and run it in Matlab, select Example.csv for testing and check t
 
 Feel free to contribute to the code. Email me at: ignaciomonge@gmail.com.
 
-[PV loops](docs/Figures/PVloop.png)
+Some examples of the graphical output.
+
+[Waveforms](docs/figures/waveforms.png)
+
+[PV loops](docs/figures/PVloops.png)
+
+[Single PV loop with characteristic points](docs/figures/PVloop.png)
+
+[Single beat EES calculation](docs/figures/EESsb.png)
+
+[LV filling analysis](docs/figures/LVfilling.png)
+
+[Diastolic function: tau calculations (four methods)](docs/figures/taudiastolic.png)
+
