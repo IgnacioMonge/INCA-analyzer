@@ -67,7 +67,6 @@ min_duration = round(min(rmoutliers(delta2,'gesd')));
 %% Time varying elastance calculation
 LV_elastance = pressure_INCA./volume_INCA;
 
-
 %% Max LV Pressure
 max_prominence_P = median(pressure_INCA);
 [pks_pressure,locs_pressure]=findpeaks(pressure_INCA,'MinPeakDistance',min_duration*0.8);
@@ -78,11 +77,6 @@ t_systolicpressure = tt1_interp(locs_pressure);
 t_end_diastole = Rwaves;
 ED_volume = interp1(tt1_interp,volume_INCA,Rwaves);
 ED_pressure = interp1(tt1_interp,pressure_INCA,Rwaves);
-
-% DEFINE THE THRESHOLD FOR SIGNIICANT CHANGES DURING IVC
-TF = ischange (ED_volume,'linear','Threshold',max(ED_volume(1:4))*0.8);
-point = find(TF == 1);
-inflection_point = point(1)-1;
 
 % Determine the Emax and t_Emax
  max_prominence = median(LV_elastance);
@@ -102,27 +96,8 @@ inflection_point = point(1)-1;
          ED_pressure = ED_pressure(1:end-1);
      end
  end
- 
- % Select on those values with a significant change in EDV
-ES_pressure = LV_ESP(inflection_point(end):end);
-ES_volume = LV_ESV(inflection_point(end):end);
-t_ES_max= time_emax(inflection_point(end):end);
-Ees = emax(inflection_point(end):end);
-
-
-%% LV_Ees calculation: Iterative calculation
-[fitresult_ESPVR, gof_ESPVR] = Ees_fit (ES_volume,ES_pressure);
-coef = coeffvalues(fitresult_ESPVR);
-LV_Ees = coef(1);
-V0 = coef(2);
-
-%  Non-linear fit of Emax (ESPVR) J. D. Schipke, Am J Physiol 1988 Vol. 255 Issue 3 Pt 2 Pages H679-84
-    yfit2 = polyfit(ES_volume,ES_pressure,2);
-    nonlinear_fit = polyval(yfit2,ES_volume);
-    Eesnl = sqrt((yfit2(2)^2)-(4*yfit2(1)*yfit2(3)));
   
-    
-%% ITERATIVE ANALYSIS OF THE PV LOOPS (FOR PRWS, SCI, ETC...)
+%% ITERATIVE ANALYSIS OF PV LOOPS
 volumes = zeros(1,1000);
 for cycle = 1:length(t_end_diastole)-1
     volume_per_cycle = volume_INCA(tt1_interp<t_end_diastole(cycle+1) & tt1_interp>t_end_diastole(cycle));
@@ -135,54 +110,95 @@ for cycle = 1:length(t_end_diastole)-1
     pressures (cycle,1:length(pressure_per_cycle)) = pressure_per_cycle;
 end
 
+elastances = zeros(1,1000);
+for cycle = 1:length(t_end_diastole)-1
+    elastance_per_cycle = LV_elastance(tt1_interp<t_end_diastole(cycle+1) & tt1_interp>t_end_diastole(cycle));
+    elastances (cycle,1:length(elastance_per_cycle)) = elastance_per_cycle;
+end
+
 timelines = zeros(1,1000);
 for cycle = 1:length(t_end_diastole)-1
     time_per_cycle = tt1_interp(tt1_interp<t_end_diastole(cycle+1) & tt1_interp>t_end_diastole(cycle));
     timelines (cycle,1:length(time_per_cycle)) = time_per_cycle;
 end
 
+SW_cycles = zeros(1,length(cycle));
+EDV_cycles  = zeros(1,length(cycle)); 
+EDP_cycles  = zeros(1,length(cycle));
+ESV_cycles  = zeros(1,length(cycle)); 
+ESP_cycles  = zeros(1,length(cycle));
+tED_cycles = zeros(1,length(cycle)); 
 
 for cycle = 1:length(t_end_diastole)-1
 volume_cycles = volumes(cycle,:);
 volume_cycles = volume_cycles(volume_cycles~=0);
-pressure_cycles = pressures(cycle,:);
-pressure_cycles = pressure_cycles(volume_cycles~=0);
-timeline_cycle = timelines(cycle,:);
-timeline_cycles = timeline_cycle(timeline_cycle~=0)';
+pressure_cycles = pressures(cycle,:); % -- use volume instead pressure 
+pressure_cycles = pressure_cycles(volume_cycles~=0); % we do exclude any actual pressure = 0 value
+elastances_cycles = elastances(cycle,:);
+elastances_cycles = elastances_cycles(volume_cycles~=0);
+timeline_cycles = timelines(cycle,:);
+timeline_cycles = timeline_cycles(timeline_cycles~=0)';
+
 EDV_cycles (cycle) = volume_cycles(end);
 EDP_cycles (cycle) = pressure_cycles(end);
 tED_cycles (cycle) = timeline_cycles(end);
+[max_elastance,Emax_cycles_idx] = max(elastances_cycles);
+t_Ees_max (cycle) = timeline_cycles(Emax_cycles_idx);
+ESP_cycles (cycle) = pressure_cycles(Emax_cycles_idx);
+ESV_cycles (cycle) = volume_cycles(Emax_cycles_idx);
 SW_cycles (cycle)= polyarea (volume_cycles,pressure_cycles);
-E_cycles = pressure_cycles./volume_cycles;
-[~,Emax_cycles_idx] = max(E_cycles);
-P_Emax(cycle) = pressure_cycles(Emax_cycles_idx);
-V_Emax(cycle) = volume_cycles(Emax_cycles_idx);
-
-figure (33)
-hold on;
-h = fill(volume_cycles,pressure_cycles,[0.1 0.1 rand(1)]);
-alpha = linspace (0,0.02,length(t_end_diastole)-1);
-set(h,'facealpha',alpha(cycle));
-plot (V_Emax(cycle),P_Emax(cycle),'or');
-plot (EDV_cycles(cycle),EDP_cycles(cycle),'og');
 end
 
+%% LV_Ees calculation: Iterative calculation
+% define the significant threshold for IVC calculations (not eventually used for ESPVR nor EDPVR)
+dur_cycle = linspace(1,cycle,cycle);
+[~,espvr_outliers1] = rmoutliers(ESV_cycles,'movmedian',3,'SamplePoints',dur_cycle);
+[~,espvr_outliers2] = rmoutliers(ESP_cycles,'movmedian',3,'SamplePoints',dur_cycle);
+ESV_cycles_processed = ESV_cycles(~espvr_outliers1 & ~espvr_outliers2);
+ESP_cycles_processed = ESP_cycles(~espvr_outliers1 & ~espvr_outliers2);
+EDV_cycles_processed = EDV_cycles(~espvr_outliers1 & ~espvr_outliers2);
+TF = ischange (EDV_cycles_processed,'linear','Threshold',max(EDV_cycles_processed (1:3))*0.25);
+point = find(TF == 1);
+inflection_point = point(1)-1;
+[fitresult_ESPVR, gof_ESPVR] = Ees_fit(ESV_cycles_processed(inflection_point :end), ESP_cycles_processed(inflection_point:end));
+coef = coeffvalues(fitresult_ESPVR);
+LV_Ees = coef(1);
+V0 = coef(2);
+rsquare_ESPVR = gof_ESPVR.rsquare;
+ 
+if rsquare_ESPVR < 0.9 % recheck extreme outliers with poor fits
+ elastance_check  = ESV_cycles_processed./ESP_cycles_processed;
+[~,outlier_compliance] = rmoutliers(elastance_check,'percentiles',[5 95]);
+[fitresult_ESPVR, gof_ESPVR] = Ees_fit(ESV_cycles_processed(~outlier_compliance), ESP_cycles_processed(~outlier_compliance));
+coeffvals_ESPVR= coeffvalues(fitresult_ESPVR);
+LV_Ees = coef(1);
+V0 = coef(2);
+rsquare_ESPVR = gof_ESPVR.rsquare;
+end
+
+
+%  Non-linear fit of Emax (ESPVR) J. D. Schipke, Am J Physiol 1988 Vol. 255 Issue 3 Pt 2 Pages H679-84
+%  Not very usefull but rather intersting.
+    yfit2 = polyfit(ESV_cycles_processed,ESP_cycles_processed,2);
+    nonlinear_fit = polyval(yfit2,ESV_cycles_processed);
+    Eesnl = sqrt((yfit2(2)^2)-(4*yfit2(1)*yfit2(3)));
+
+
+%% PRELOAD RECRUITABLE STROKE WORK FIT
+% define the significant threshold for IVC calculations (not eventually used for ESPVR nor EDPVR)
+TF = ischange (ED_volume,'linear','Threshold',max(ED_volume(1:4))*0.8);
+point = find(TF == 1);
+inflection_point = point(1)-1;
+
 EDV_ix = EDV_cycles (inflection_point(end):end);
-SW_ix = SW_cycles (inflection_point(end):end);    
-[fitresult_PRSW, gof_PRSW] = prsw_fit(EDV_ix,SW_ix);
+SW_cycles_ix = SW_cycles (inflection_point(end):end);
+
+[fitresult_PRSW, gof_PRSW] = prsw_fit(EDV_ix,SW_cycles_ix);
 coef_PRSW = coeffvalues(fitresult_PRSW);
 PRSW = coef_PRSW(1);
 Vw = coef_PRSW(2);
 
-% figure (303)
-% plot(fitresult_PRSW, EDV_ix, SW_ix);hold on;
-% plot(EDV_ix,SW_ix,'o')   
-    
-    
-% %% END-DIASTOLIC ANALYSIS
-% ED_volume_max = ED_volume(inflection_point(end)-1:end);
-% ED_pressure_max = ED_pressure (inflection_point(end)-1:end);
-% t_ED_max = t_end_diastole (inflection_point(end)-1:end);
+%% DIASTOLIC ANALYSIS
 
 %% Calculation of EDPVR fit
 dur_cycle = linspace(1,cycle,cycle);
@@ -195,7 +211,7 @@ coeffvals_EDPVR= coeffvalues(fitresult_EDPVR);
 beta_index = coeffvals_EDPVR(2);
 rsquare_EDPVR = gof.rsquare;
 
-if beta_index < 0 | rsquare_EDPVR < 0.8 % recheck out extreme outliers when Beta < 0 or with poor fits
+if beta_index < 0 || rsquare_EDPVR < 0.8 % recheck out extreme outliers when Beta < 0 or with poor fits
  compliance_check  = EDV_cycles_processed./EDP_cycles_processed;
 [~,outlier_compliance] = rmoutliers(compliance_check,'percentiles',[5 95]);
 [fitresult_EDPVR, gof] = createFit(EDV_cycles_processed(~outlier_compliance), EDP_cycles_processed(~outlier_compliance));
@@ -203,7 +219,8 @@ coeffvals_EDPVR= coeffvalues(fitresult_EDPVR);
 beta_index = coeffvals_EDPVR(2);
 rsquare_EDPVR = gof.rsquare;
 end
-    
+
+
 %% PV-LOOP ANALYSIS
 stc_pressure_LV = pressure_INCA(tt1_interp<Rwaves(6));
 stc_volume_LV = volume_INCA(tt1_interp<Rwaves(6));
@@ -298,14 +315,14 @@ t_Pmax = time_Pmax(idx_Pmax);
 % Single-beat Ees estimation
 Ees_sb = (Pmax_iso - ESP) / (EDV - ESV);
 
-% figure (304) % Single-beat fit plot
-% hold on;
-% plot(tt1,mean_Pressure);
-% plot(toi_sbEes,poi_sbEes,'or');
-% plot(tt1,isovolemic_fit);
-% plot(t_Pmax,Pmax_iso,'ob');
-% ylim ([0 max(Pmax_iso)+5]);
-% xlim ([0 toi_sbEes(end)+0.1]);
+figure (304) % Single-beat fit plot
+hold on;
+plot(tt1,mean_Pressure);
+plot(toi_sbEes,poi_sbEes,'or');
+plot(tt1,isovolemic_fit);
+plot(t_Pmax,Pmax_iso,'ob');
+ylim ([0 max(Pmax_iso)+5]);
+xlim ([0 toi_sbEes(end)+0.1]);
 
 %% Peak filling rate and Peak ejection rate
 LV_dVdt_raw = gradient(mean_Volume,tt1);
@@ -419,17 +436,17 @@ threshold_tau = round(length(last_timeline)/2);
 %% LV suction evaulation: suction pressure (lowest pressure during initial diastole)
 suction_pressure = min(last_pressures);
 t_suction = interp1(last_pressures,last_timeline,suction_pressure);
-
+% 
 % figure (2002) % end of isovolumetric contraction based on PV-loops
 %     hold on;    
 %     plot(tt1,stiffness,'linewidth',1);
-% %     plot(tt1,iso_fit,'-k');
-% %     plot(tt1,fit_isoup,'-g');
-% %     plot(tt1,fit_isodown,'-m');
+%     plot(tt1,iso_fit,'-k');
+%     plot(tt1,fit_isoup,'-g');
+%     plot(tt1,fit_isodown,'-m');
 %     plot(t_endiso,iso_Ees,'*b');
-% %     plot(t_iso,stiffness(maxisofit_idx),'ok');
-% %     plot(toi1,Eoi1,'.g','linewidth',2);
-% %     plot(toi2,Eoi2,'.r','linewidth',2);
+%     plot(t_iso,stiffness(maxisofit_idx),'ok');
+%     plot(toi1,Eoi1,'.g','linewidth',2);
+%     plot(toi2,Eoi2,'.r','linewidth',2);
 %      ylim ([0 Emax*1.1])
 %      xlim ([0 length(Elastance)*dt])
 %      yyaxis right;
@@ -604,13 +621,13 @@ axis tight;
     title ('LV Volume');
     plot (tt1_interp,volume_INCA)
     hold on
-    plot(t_ES_max,ES_volume,'*k');hold on;
+    plot(t_Ees_max,SW_cycles,'*k');hold on;
     plot(tED_cycles,EDV_cycles,'*g');
 subplot(4,1,4)
     axis tight;
     xlabel ('time, s')
     title ('LV elastance');
-    plot(t_ES_max,Ees,'*k');hold on;
+    plot(t_Ees_max,max_elastance,'*k');hold on;
     plot (tt1_interp,LV_elastance)
 
 figure (2) % PV loop with Emax marks
@@ -621,7 +638,7 @@ hold on;
 plot (mean_LVvolume,mean_LVpressure,'g','linewidth',3)
 plot(ESV,ESP,'*m');
 plot(EDV,EDP,'*m');
-plot(fitresult_ESPVR, ES_volume, ES_pressure);hold on;
+plot(fitresult_ESPVR, ESV_cycles_processed, ESP_cycles_processed);hold on;
 % plot(ES_volume,yfit,'r-.','linewidth',3); hold on;
 % plot(ES_volume, nonlinear_fit,'g-.','linewidth',3);hold on;
 txt_Ees = ['LV Ees: ' num2str(LV_Ees)];
@@ -629,8 +646,8 @@ txt_EDPVR = ['EDPVR (beta index): ' num2str(beta_index)];
 text(min(volume_INCA)-2,max(pressure_INCA),txt_Ees);
 text(min(volume_INCA)-2,max(pressure_INCA)-5,txt_EDPVR);
 % edpvr
-plot (ES_volume,ES_pressure,'*k'); hold on;
-plot(fitresult_EDPVR, EDV_cycles, EDP_cycles);hold on;
+plot (ESV_cycles_processed(inflection_point :end),ESP_cycles_processed(inflection_point :end),'*k'); hold on;
+plot(fitresult_EDPVR, EDV_cycles(inflection_point :end), EDP_cycles(inflection_point :end));hold on;
 
 figure (3) % PV loop with Emax marks
 hold on;
@@ -686,7 +703,6 @@ ylabel('LV dPdt, mmHg/s')
 txt = ['Tau (Logistic): ' num2str(tau_Logistic)];
 text(tau_pressure_line(end),min(tau_dPdt),txt);
 
-
 function [fitresult, gof] = createFit(EDV_cycles, EDP_cycles)
 %% Fit: 'EDPVR FIT'.
 [xData, yData] = prepareCurveData( EDV_cycles, EDP_cycles );
@@ -697,7 +713,7 @@ opts.Display = 'Off';
 ops.Robust = 'LAR';
 opts.StartPoint = [0 0.02 0];
 [fitresult, gof] = fit( xData, yData, ft, opts );
-end
+ end
 
  function [fitresult, gof] = createFit2(ES_volume, ES_pressure)
 [xData, yData] = prepareCurveData( ES_volume, ES_pressure );
@@ -715,33 +731,19 @@ function [fitresult, gof] = sbEes(toi_sbEes, poi_sbEes)
 % Set up fittype and options.
 ft = fittype( 'poly5' );
 opts = fitoptions( 'Method', 'LinearLeastSquares' );
-opts.Robust = 'Bisquare';
+opts.Robust = 'On';
 % Fit model to data.
 [fitresult, gof] = fit( xData, yData, ft, opts );
 
 end
 
 function [fitresult, gof] = Ees_fit(ES_volume, ES_pressure)
-%CREATEFITS(ES_VOLUME,ES_PRESSURE)
-%  Create fits.
-%
-%  Data for 'untitled fit 1' fit:
-%      X Input : ES_volume
-%      Y Output: ES_pressure
-%  Output:
-%      fitresult : a cell-array of fit objects representing the fits.
-%      gof : structure array with goodness-of fit info.
-%
-%  See also FIT, CFIT, SFIT.
-%% Fit: 'untitled fit 1'.
-[xData, yData] = prepareCurveData( ES_volume, ES_pressure );
-[~,outlier] = rmoutliers(ES_pressure,'gesd','ThresholdFactor',0.3);
-% Set up fittype and options.
+[xData, yData] = prepareCurveData(ES_volume, ES_pressure);
 ft = fittype( 'a  * (x - b)', 'independent', 'x', 'dependent', 'y' );
-opts = fitoptions( 'Method', 'NonlinearLeastSquares','Exclude', outlier);
+opts = fitoptions( 'Method', 'NonlinearLeastSquares');
 opts.Algorithm = 'Levenberg-Marquardt';
 opts.Display = 'Off';
-opts.Robust = 'Off';
+opts.Robust = 'On';
 opts.StartPoint = [0 0];
 
 % Fit model to data.
