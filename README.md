@@ -12,15 +12,15 @@ Feel free to contribute to the code. Email me at: ignaciomonge@gmail.com.
 
 Some examples of the graphical output.
 
-[Waveforms](docs/figures/waveforms.png)
+![Waveforms](docs/figures/waveforms.png)
 
-[PV loops](docs/figures/PVloops.png)
+![PV loops](docs/figures/PVloops.png)
 
-[Single PV loop with characteristic points](docs/figures/PVloop.png)
+![Single PV loop with characteristic points](docs/figures/PVloop.png)
 
-[Single beat EES calculation](docs/figures/EESsb.png)
+![Single beat EES calculation](docs/figures/EESsb.png)
 
-[LV filling analysis](docs/figures/LVfilling.png)
+![LV filling analysis](docs/figures/LVfilling.png)
 
-[Diastolic function: tau calculations (four methods)](docs/figures/taudiastolic.png)
+![Diastolic function: tau calculations (four methods)](docs/figures/taudiastolic.png)
 
