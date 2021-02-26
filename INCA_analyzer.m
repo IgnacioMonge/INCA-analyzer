@@ -8,7 +8,7 @@ negative_values = 0;
 
 %% loading interface for LV data from the INCA System
 % Vectors are defined in different columns. Please, adjust according to the
-% exportated file
+% file exported from INCA software
 
 [filename,path] = uigetfile('*.csv');
 data_INCA= dlmread([path,filename], ',', 5, 0);
@@ -18,7 +18,6 @@ data_INCA= dlmread([path,filename], ',', 5, 0);
     ECG_INCA = data_INCA (:,3)';
     pressure_INCA = data_INCA (:,4)';
     volume_INCA = data_INCA (:,6)';
-    
 
 % Constructing vector of interpolation points
 DT1 = length(pressure_INCA);
@@ -29,7 +28,7 @@ tt1_interp = linspace(0,DT1*dt,DT1);
  if any(volume_INCA<0)
      negative_values = 1;
      offset = abs(min(volume_INCA))+10; % select an arbitrary addition to avoid 0 values on volume
-     volume_INCA = volume_INCA+offset;
+     volume_INCA = volume_INCA+offset; % This addition will be removed later for other calculations
  end
 
 % Determining the threshold for R peak finder
@@ -116,6 +115,12 @@ for cycle = 1:length(t_end_diastole)-1
     elastances (cycle,1:length(elastance_per_cycle)) = elastance_per_cycle;
 end
 
+ecg = zeros(1,1000);
+for cycle = 1:length(t_end_diastole)-1
+    ecg_per_cycle = ECG_INCA (tt1_interp<t_end_diastole(cycle+1) & tt1_interp>t_end_diastole(cycle));
+    ecg (cycle,1:length(ecg_per_cycle)) = ecg_per_cycle;
+end
+
 timelines = zeros(1,1000);
 for cycle = 1:length(t_end_diastole)-1
     time_per_cycle = tt1_interp(tt1_interp<t_end_diastole(cycle+1) & tt1_interp>t_end_diastole(cycle));
@@ -128,6 +133,8 @@ EDP_cycles  = zeros(1,length(cycle));
 ESV_cycles  = zeros(1,length(cycle)); 
 ESP_cycles  = zeros(1,length(cycle));
 tED_cycles = zeros(1,length(cycle)); 
+max_elastance = zeros(1,length(cycle));
+t_Ees_max = zeros(1,length(cycle));
 
 for cycle = 1:length(t_end_diastole)-1
 volume_cycles = volumes(cycle,:);
@@ -138,6 +145,8 @@ elastances_cycles = elastances(cycle,:);
 elastances_cycles = elastances_cycles(volume_cycles~=0);
 timeline_cycles = timelines(cycle,:);
 timeline_cycles = timeline_cycles(timeline_cycles~=0)';
+ecg_cycle = ecg(cycle,:);
+ecg_cycles = ecg_cycle(ecg_cycle~=0)';
 
 EDV_cycles (cycle) = volume_cycles(end);
 EDP_cycles (cycle) = pressure_cycles(end);
@@ -150,23 +159,25 @@ SW_cycles (cycle)= polyarea (volume_cycles,pressure_cycles);
 end
 
 %% LV_Ees calculation: Iterative calculation
-% define the significant threshold for IVC calculations (not eventually used for ESPVR nor EDPVR)
 dur_cycle = linspace(1,cycle,cycle);
+% Pre-process potential outliers in noissy PV loops
 [~,espvr_outliers1] = rmoutliers(ESV_cycles,'movmedian',3,'SamplePoints',dur_cycle);
 [~,espvr_outliers2] = rmoutliers(ESP_cycles,'movmedian',3,'SamplePoints',dur_cycle);
 ESV_cycles_processed = ESV_cycles(~espvr_outliers1 & ~espvr_outliers2);
 ESP_cycles_processed = ESP_cycles(~espvr_outliers1 & ~espvr_outliers2);
 EDV_cycles_processed = EDV_cycles(~espvr_outliers1 & ~espvr_outliers2);
+% define the significant threshold for IVC calculations (not eventually used for ESPVR nor EDPVR)
 TF = ischange (EDV_cycles_processed,'linear','Threshold',max(EDV_cycles_processed (1:3))*0.25);
 point = find(TF == 1);
 inflection_point = point(1)-1;
 [fitresult_ESPVR, gof_ESPVR] = Ees_fit(ESV_cycles_processed(inflection_point :end), ESP_cycles_processed(inflection_point:end));
+% Get the coefficients of the fits (slope = Ees, V0, and R2 of the fit)
 coef = coeffvalues(fitresult_ESPVR);
 LV_Ees = coef(1);
 V0 = coef(2);
 rsquare_ESPVR = gof_ESPVR.rsquare;
  
-if rsquare_ESPVR < 0.9 % recheck extreme outliers with poor fits
+if rsquare_ESPVR < 0.9 % if the fit has a R2 < 0.9, recheck removing potential extreme outliers not previously detected
  elastance_check  = ESV_cycles_processed./ESP_cycles_processed;
 [~,outlier_compliance] = rmoutliers(elastance_check,'percentiles',[5 95]);
 [fitresult_ESPVR, gof_ESPVR] = Ees_fit(ESV_cycles_processed(~outlier_compliance), ESP_cycles_processed(~outlier_compliance));
@@ -198,7 +209,6 @@ PRSW = coef_PRSW(1);
 Vw = coef_PRSW(2);
 
 %% DIASTOLIC ANALYSIS
-
 %% Calculation of EDPVR fit
 dur_cycle = linspace(1,cycle,cycle);
 [~,edpvr_outliers1] = rmoutliers(EDV_cycles,'movmedian',3,'SamplePoints',dur_cycle);
@@ -221,45 +231,83 @@ end
 
 
 %% PV-LOOP ANALYSIS
-stc_pressure_LV = pressure_INCA(tt1_interp<Rwaves(6));
-stc_volume_LV = volume_INCA(tt1_interp<Rwaves(6));
-stc_ECG = ECG_INCA(tt1_interp<Rwaves(6));
+% stc_pressure_LV = pressure_INCA(tt1_interp<Rwaves(6));
+% stc_volume_LV = volume_INCA(tt1_interp<Rwaves(6));
+% stc_ECG = ECG_INCA(tt1_interp<Rwaves(6));
+% 
+% % Averaging PV loop
+% tDE1 = locs_Rpeaks(1:5)';    
+% t_stc = tt1_interp(tDE1);
+% 
+% delta3 = zeros(1,length(tDE1)-1);
+% for kk1 = 1:(length(tDE1)-1)
+%     delta3(kk1) = (tDE1(kk1+1)) - tDE1(kk1);
+% end
+% 
+% DT1 = mean(delta3);
+% tt1= linspace(0,DT1*dt,DT1);
+% pp1 = zeros(length(tDE1)-1,length(tt1));
+% vv1 = zeros(length(tDE1)-1,length(tt1));
+% ecg1 =zeros(length(tDE1)-1,length(tt1));
+% mean_LVpressure = zeros(length(DT1),length(tt1));
+% mean_LVvolume = zeros(length(DT1),length(tt1));
+% mean_ecg = zeros(length(DT1),length(tt1));
+% 
+% for kk2 = 1:length(tDE1)-1
+%     ratio_N1 = ((length(tt1_interp(tDE1(kk2):tDE1(kk2+1)))-1)/DT1);
+%     T1_interp = tt1*ratio_N1 + tt1_interp(tDE1(kk2));
+%     pp1(kk2,:)= interp1(tt1_interp(tDE1(kk2):tDE1(kk2+1)),stc_pressure_LV(tDE1(kk2):tDE1(kk2+1)),T1_interp);
+%     vv1(kk2,:)= interp1(tt1_interp(tDE1(kk2):tDE1(kk2+1)),stc_volume_LV(tDE1(kk2):tDE1(kk2+1)),T1_interp);
+%     ecg1(kk2,:)= interp1(tt1_interp(tDE1(kk2):tDE1(kk2+1)),stc_ECG(tDE1(kk2):tDE1(kk2+1)),T1_interp);
+% end
+% 
+% for jj1 = 1:DT1
+%     mean_LVpressure(jj1) = mean(pp1(:,jj1));
+%     mean_LVvolume(jj1) = mean(vv1(:,jj1));
+%     mean_ecg(jj1) = mean(ecg1(:,jj1));
+% end
+% mean_Pressure = mean_LVpressure;
+% mean_Volume = mean_LVvolume;
+% mean_ECG = mean_ecg;
 
-%% Averaging PV loop
-tDE1 = locs_Rpeaks(1:5)';    
+%% NEW METHOD BASED ON Dynamic Time Warping Barycenter Averaging
+% Taken from: https://github.com/fpetitjean/DBA
+% A global averaging method for dynamic time warping, with applications to clustering
+% François Petitjean,"A global averaging method for dynamic time warping, with applications to clustering",
+% Pattern Recognition (44),3; pages 678--693 (2011)
+
+% Averaging PV loop
+tDE1 = locs_Rpeaks(2:6)';    
 t_stc = tt1_interp(tDE1);
 
-delta3 = zeros(1,length(tDE1)-1);
-for kk1 = 1:(length(tDE1)-1)
-    delta3(kk1) = (tDE1(kk1+1)) - tDE1(kk1);
-end
 
-DT1 = mean(delta3);
-tt1= linspace(0,DT1*dt,DT1);
-pp1 = zeros(length(tDE1)-1,length(tt1));
-vv1 = zeros(length(tDE1)-1,length(tt1));
-ecg1 =zeros(length(tDE1)-1,length(tt1));
-mean_LVpressure = zeros(length(DT1),length(tt1));
-mean_LVvolume = zeros(length(DT1),length(tt1));
-mean_Pressure = zeros(length(DT1),length(tt1));
-mean_ECG = zeros(length(DT1),length(tt1));
-kk2 = zeros(length(tDE1)-1,length(tt1));
+stc_pressure_LV = pressure_INCA(tt1_interp<=t_stc(5));
+stc_volume_LV = volume_INCA(tt1_interp<=t_stc(5));
+stc_ECG = ECG_INCA(tt1_interp<=t_stc(5));
+
 for kk2 = 1:length(tDE1)-1
-    ratio_N1 = ((length(tt1_interp(tDE1(kk2):tDE1(kk2+1)))-1)/DT1);
-    T1_interp = tt1*ratio_N1 + tt1_interp(tDE1(kk2));
-    pp1(kk2,:)= interp1(tt1_interp(tDE1(kk2):tDE1(kk2+1)),stc_pressure_LV(tDE1(kk2):tDE1(kk2+1)),T1_interp);
-    vv1(kk2,:)= interp1(tt1_interp(tDE1(kk2):tDE1(kk2+1)),stc_volume_LV(tDE1(kk2):tDE1(kk2+1)),T1_interp);
-    ecg1(kk2,:)= interp1(tt1_interp(tDE1(kk2):tDE1(kk2+1)),stc_ECG(tDE1(kk2):tDE1(kk2+1)),T1_interp);
+    pressure_sequences{kk2,:}= stc_pressure_LV(tDE1(kk2):tDE1(kk2+1));
+    volume_sequences{kk2,:}= stc_volume_LV(tDE1(kk2):tDE1(kk2+1));
+    ECG_sequences{kk2,:} = stc_ECG(tDE1(kk2):tDE1(kk2+1));
 end
 
-for jj1 = 1:DT1
-    mean_LVpressure(jj1) = mean(pp1(:,jj1));
-    mean_LVvolume(jj1) = mean(vv1(:,jj1));
-    mean_ecg(jj1) = mean(ecg1(:,jj1));
+ mean_Pressure = DBA(pressure_sequences);
+ mean_Volume = DBA(volume_sequences);
+ mean_ECG = DBA(ECG_sequences);
+
+% Smooth signals
+mean_Pressure = sgolayfilt(mean_Pressure,1,9);
+mean_Volume = sgolayfilt(mean_Volume,1,9);
+mean_ECG = sgolayfilt(mean_ECG,1,9);
+
+% Align timelines
+if length(mean_Pressure) > length(mean_Volume)
+    mean_Pressure = mean_Pressure (1:length(mean_Volume));
+elseif length(mean_Pressure) < length(mean_Volume)
+    mean_Volume = mean_Volume (1:length(mean_Pressure));
 end
-mean_Pressure = mean_LVpressure;
-mean_Volume = mean_LVvolume;
-mean_ECG = mean_ecg;
+tt1= linspace(0,length(mean_Pressure)*dt,length(mean_Pressure));
+
 
 %% Pressure and Volumes
 EDP = mean_Pressure (end);
@@ -277,7 +325,7 @@ t_cycle = length(mean_Pressure)*dt;
 heart_rate = 60/(t_cycle);
 cardiac_output = (SV * heart_rate)/1000;
 LVEF = (SV/EDV)*100;
-SW = polyarea (mean_LVvolume,mean_LVpressure);
+SW = polyarea (mean_Volume,mean_Pressure);
 
 %% LV dP/dtmax & dP/dtmin
 LV_dpdt = gradient(mean_Pressure,tt1);
@@ -292,7 +340,6 @@ pressure_dpdtmin = interp1(tt1,mean_Pressure,t_LVdpdtmin);
 volume_dpdtmin = interp1(tt1,mean_Volume,t_LVdpdtmin);
 
 %% Single-beat Ees estimation based on Ten Brinke et al. (2010) , Acta physiologica 198(1), 37–46.
-% Determine the areas and points of interest
 dPdt = LV_dpdt;
 dPmax = LV_dpdtmax;
 t_dPmax = t_LVdpdtmax; 
@@ -345,8 +392,9 @@ PFR_candidates = PFRpks(tPFR_candidates<tt1(end)*0.8);
  t_PFR = tPFR_candidates2(maxPFRpks_idx)*1000;
 PFR = interp1(tt1,LV_dVdt,t_PFR/1000);
 
-%% Atrial contribution assessment
+%% ATRIAL FUNCTION ASSESSMENT
 LV_dVdt_atrial = gradient(mean_Volume ,tt1);
+LV_dVdt_atrial = sgolayfilt(LV_dVdt_atrial,1,7);
 ZeroX = @(v) find(diff(sign(v))); % Returns Zero-Crossing Indices Of dPdt
 dVdt_zeros = ZeroX(LV_dVdt);
 t_dVdt_end = tt1(dVdt_zeros(end))-dt;
@@ -369,20 +417,23 @@ else
     t_atrialcontraction = tt1(dVdt_crossing);
 end
 
-atrial_duration = (tt1(end) - t_atrialcontraction)*1000;
 atrial_pressure = interp1(tt1,mean_Pressure,t_atrialcontraction);
 atrial_volume = interp1(tt1,mean_Volume,t_atrialcontraction);
 atrial_contribution = ((EDV-atrial_volume)/EDV) *100;
 passive_contribution = (atrial_volume/EDV)*100;
 atrial_pressure_gradient = EDP - atrial_pressure;
 
+<<<<<<< HEAD:ANALYSIS_IVC.m
+% estimation of atrial work (pressure x volume)
+=======
 %% estimation of atrial work (pressure x volume)
+>>>>>>> 219bc06cd75134a804d8250f6c206ec54b457060:INCA_analyzer.m
 atrial_duration = (tt1(end) - t_atrialcontraction)*1000;
 atrial_volume_area = trapz(mean_Volume(tt1>=t_atrialcontraction));
 atrial_pressure_area = trapz(abs((mean_Pressure(tt1>=t_atrialcontraction)))*atrial_duration/1000);
 atrial_work = atrial_volume_area * atrial_pressure_area;
 
-%% Atrial filling rate
+% Atrial filling rate
 toi_atrial = tt1(tt1>t_atrialcontraction);
 dvoi_atrial = LV_dVdt(tt1>t_atrialcontraction);
 [PFR_atria,PFRatria_idx] = max(dvoi_atrial);
@@ -394,6 +445,50 @@ ProductPV = mean_Pressure.*mean_Volume;
 tmax_ProductPV = tt1(max_ProductPV);
 dp = gradient(ProductPV);
 dp = sgolayfilt(dp,2,7);
+<<<<<<< HEAD:ANALYSIS_IVC.m
+[~,maxdp] = max(dp);
+t_maxdp = tt1(maxdp);
+slope = tmax_ProductPV-t_maxdp;
+[~,max_Emax] = max(Elastance);
+de = gradient(ProductPV);
+de2 = gradient(de);
+de3 = gradient(de2);
+de4_raw = gradient(de3);
+de4 =sgolayfilt(de4_raw,2,11);
+dedt4_zeros = ZeroX(de);
+candidates = dedt4_zeros(dedt4_zeros<max_Emax);
+t_candidates = tt1(candidates);
+point = t_maxdp  + ((t_Elastance-t_maxdp)*0.8);
+
+if slope < 0.1
+    toi_isonew1 = tt1(tt1<t_maxdp*1.55);
+    poi_isonew1 = mean_Pressure(tt1<t_maxdp*1.55);
+    voi_isonew1 = mean_Volume(tt1<t_maxdp*1.55);
+    eoi_isonew1 = ProductPV(tt1<t_maxdp*1.55);
+else
+    toi_isonew1 = tt1(tt1<t_maxdp);
+    poi_isonew1 = mean_Pressure(tt1<t_maxdp);
+    voi_isonew1 = mean_Volume(tt1<t_maxdp);
+    eoi_isonew1 = ProductPV(tt1<t_maxdp);
+end
+    
+    
+if tmax_ProductPV <= t_maxdp
+    toi_isonew2 = tt1(tt1<t_Elastance*1.2 & tt1>tmax_ProductPV*2);
+    poi_isonew2 = mean_Pressure(tt1<t_Elastance*1.2 & tt1>tmax_ProductPV*2);
+    voi_isonew2 = mean_Volume(tt1<t_Elastance*1.2 & tt1>tmax_ProductPV*2);
+    eoi_isonew2 = ProductPV(tt1<t_Elastance*1.2 & tt1>tmax_ProductPV*2);
+else
+    addition = tmax_ProductPV*1.25;
+    toi_isonew2 = tt1(tt1<t_Elastance*1.2 & tt1>addition);
+    poi_isonew2 = mean_Pressure(tt1<t_Elastance*1.2 & tt1>addition);
+    voi_isonew2 = mean_Volume(tt1<t_Elastance*1.2 & tt1>addition);
+    eoi_isonew2 = ProductPV(tt1<t_Elastance*1.2 & tt1>addition);
+end
+
+[fitiso, gofiso] = linearinterp_fit(toi_isonew1, eoi_isonew1);% fit iso 
+[fiteject, gofeject] = linearinterp_fit(toi_isonew2, eoi_isonew2);% fit ejection
+=======
 dp2 = gradient(dp);
 dp2 = sgolayfilt(dp2,2,7);
 dp3 = gradient(dp2);
@@ -433,12 +528,16 @@ end
 
 [fitiso, gofiso] = linearinter_fit(toi_isonew1, eoi_isonew1);% fit iso 
 [fiteject, gofeject] = linearinter_fit(toi_isonew2, eoi_isonew2);% fit ejection
+>>>>>>> 219bc06cd75134a804d8250f6c206ec54b457060:INCA_analyzer.m
 fit_isocont = fitiso(tt1);
 fit_ejection = fiteject(tt1);
 [intersci_newiso,interscy_newiso] = polyxpoly(tt1,fit_isocont,tt1,fit_ejection);
 
 t_endiso = intersci_newiso(1);
+<<<<<<< HEAD:ANALYSIS_IVC.m
+=======
 pressure_endiso = interp1(tt1,mean_Pressure,t_endiso);
+>>>>>>> 219bc06cd75134a804d8250f6c206ec54b457060:INCA_analyzer.m
 volume_endiso = interp1(tt1,mean_Volume,t_endiso);
 pressure_endiso = interp1(tt1,mean_Pressure,t_endiso);
 
@@ -449,7 +548,12 @@ threshold_tau = round(length(last_timeline)/2);
 
 %% LV suction evaulation: suction pressure (lowest pressure during initial diastole)
 suction_pressure = min(last_pressures);
+<<<<<<< HEAD:ANALYSIS_IVC.m
+[~,idx_lastpressure] = unique(last_pressures);
+t_suction = interp1(last_pressures(idx_lastpressure),last_timeline(idx_lastpressure),suction_pressure);
+=======
 t_suction = interp1(last_pressures,last_timeline,suction_pressure);
+>>>>>>> 219bc06cd75134a804d8250f6c206ec54b457060:INCA_analyzer.m
  
 % figure (2002) % end of isovolumetric contraction based on PV-loops
 %     hold on;    
@@ -478,9 +582,11 @@ figure (50) % LV dynamic analysis
     plot(tt1,LV_dVdt_raw);
     plot(t_PFRatria,PFR_atria,'og');
     yyaxis right;
+    hold on;
     plot(tt1,mean_Volume);hold on;
-    plot(t_atrialcontraction,atrial_volume,'*r'); hold on;
-    plot(t_endiso,volume_endiso,'*k'); hold on;
+    plot(t_atrialcontraction,atrial_volume,'*r'); 
+    plot(t_endiso,volume_endiso,'*k'); 
+%     plot(t_endrelax,volume_endrelax,'or');
     plot(t_Elastance,ESV,'*g');
 
  
@@ -520,8 +626,13 @@ toi5 = tt1(tt1>t_tau_end2*0.80 & tt1<t_tau_end2*1.02);
 voi5 = mean_Volume(tt1>t_tau_end2*0.80 & tt1<t_tau_end2*1.02);
 toi6 = tt1(tt1>t_tau_end2*0.98 & tt1<t_PFR/1000*1.2);
 voi6 = mean_Volume(tt1>t_tau_end2*0.98 & tt1<t_PFR/1000*1.2);
+<<<<<<< HEAD:ANALYSIS_IVC.m
+[fitup5, gofup5] = linearinterp_fit(toi5, voi5);% fit iso 
+[fitdown6, gofdown6] = linearinterp_fit(toi6, voi6);% fit ejection
+=======
 [fitup5, gofup5] = linearinter_fit(toi5, voi5);% fit iso 
 [fitdown6, gofdown6] = linearinter_fit(toi6, voi6);% fit ejection
+>>>>>>> 219bc06cd75134a804d8250f6c206ec54b457060:INCA_analyzer.m
 fit_relaxup = fitup5(tt1);
 fit_relaxdown = fitdown6(tt1);
 [intersci_relax,interscy_relax] = polyxpoly(tt1,fit_relaxup,tt1,fit_relaxdown);
@@ -532,16 +643,20 @@ pressure_endrelax1 = interp1(tt1,mean_Pressure,t_endrelax1);
 
 end_relax2 = atrial_pressure;
 pressure_of_interest2 = mean_Pressure(tt1>t_Elastance & tt1<t_suction);
+[~,idx_pressure_of_interest2] = unique(pressure_of_interest2);
 time_of_interest2 = tt1(tt1>t_Elastance & tt1<t_suction);
 volume_of_interest2 = mean_Volume(tt1>t_Elastance & tt1<t_suction);
-t_endrelax2 = interp1(pressure_of_interest2 ,time_of_interest2,end_relax2);
+t_endrelax2 = interp1(pressure_of_interest2(idx_pressure_of_interest2),time_of_interest2(idx_pressure_of_interest2),end_relax2);
 volume_endrelax2 = interp1(tt1,mean_Volume,t_endrelax2);
 pressure_endrelax2 = interp1(tt1,mean_Pressure,t_endrelax2);
 
 % take the middle point (minimization of the bias)
 relax_dif = abs(t_endrelax2-t_endrelax1)/2;
+
 if relax_dif == 0
-    t_relax = t_endrelax2;
+    t_endrelax = t_endrelax2;
+elseif relax_dif > 0.02 % take the lower value
+    t_endrelax = t_endrelax2;
 else
     if t_endrelax2 < t_endrelax1
         t_endrelax = t_endrelax2+relax_dif;
@@ -569,11 +684,14 @@ pressure_endrelax = interp1(tt1,mean_Pressure,t_endrelax);
 %     plot(t_endrelax,volume_endrelax,'ob');
 %     ylim ([min(mean_Volume)-5 max(mean_Volume)+5])
  
-%% RELAXATION TIME CONSTANT
 
+%% RELAXATION TIME CONSTANTS
 % Tau time end-point defined as the next EDP plus a predefined offset (5 mmHg)
 tau_end_pressure = last_pressures(end)+5;
-t_tau_end = interp1(last_pressures(1:threshold_tau),last_timeline(1:threshold_tau),tau_end_pressure);
+lastpressures_oi = last_pressures(1:threshold_tau);
+lasttimeline_oi = last_timeline(1:threshold_tau);
+[~,idx_lastpressures_oi] = unique(lastpressures_oi);
+t_tau_end = interp1(lastpressures_oi(idx_lastpressures_oi),lasttimeline_oi(idx_lastpressures_oi),tau_end_pressure);
 
 % Pressure segment for calculation
 tau_timeline = tt1(tt1 >= t_LVdpdtmin & tt1 <= t_tau_end);
@@ -582,14 +700,14 @@ tau_pressure_line = mean_Pressure(tt1 >= t_LVdpdtmin & tt1 <= t_tau_end);
  % Check if length of pressure segment is enough for calculation
  if length(tau_pressure_line) < 6
     tau_end_pressure = last_pressures(end);
-    t_tau_end = interp1(last_pressures(1:threshold_tau),last_timeline(1:threshold_tau),tau_end_pressure);
+    t_tau_end = interp1(lastpressures_io(idx_lastpressure_io),lasttimeline_io(idx_lastpressure_io),tau_end_pressure);
     tau_timeline = tt1(tt1 >= t_LVdpdtmin & tt1 <= t_tau_end);
     tau_pressure_line = mean_Pressure(tt1 >= t_LVdpdtmin & tt1 <= t_tau_end);
  end
  
 % TAU MIRSKY: tau = time at 50% pressure decrease from pressure at dPdtmin.
 pressure_Mirsky = pressure_dpdtmin / 2;
-t_end_Mirsky = interp1(last_pressures(1:threshold_tau),last_timeline(1:threshold_tau),pressure_Mirsky);
+t_end_Mirsky = interp1(lastpressures_oi(idx_lastpressures_oi),lasttimeline_oi(idx_lastpressures_oi),pressure_Mirsky);
 tau_Mirsky = (t_end_Mirsky - t_LVdpdtmin)*1000;
 
 % TAU WEISS
@@ -618,7 +736,7 @@ subplot(4,1,1)
     xlabel ('time, s')
     title ('EKG');
     plot(Rwaves,rpeaks,'*k');hold on;
-    plot(t_stc,rpeaks(1:5),'*g');hold on;
+%     plot(t_stc,rpeaks(1:5),'*g');hold on;
     plot (tt1_interp,ECG_INCA);hold on
 subplot(4,1,2)
     axis tight;
@@ -647,7 +765,7 @@ plot (volume_INCA,pressure_INCA);
 hold on;
 % plot (ED_volume_max,ED_pressure_max,'*g');
 hold on;
-plot (mean_LVvolume,mean_LVpressure,'g','linewidth',3)
+plot (mean_Volume,mean_Pressure,'g','linewidth',3)
 plot(ESV,ESP,'*m');
 plot(EDV,EDP,'*m');
 plot(fitresult_ESPVR, ESV_cycles_processed, ESP_cycles_processed);hold on;
@@ -663,7 +781,7 @@ plot(fitresult_EDPVR, EDV_cycles(inflection_point :end), EDP_cycles(inflection_p
 
 figure (31) % PV loop with Emax marks
 hold on;
-plot (mean_LVvolume,mean_LVpressure,'g','linewidth',2)
+plot (mean_Volume,mean_Pressure,'g','linewidth',2)
 plot(ESV,ESP,'ok');
 plot(EDV,EDP,'ob');
 plot(volume_endiso,pressure_endiso,'Or');
@@ -720,7 +838,7 @@ ft = fittype( 'y0+A*exp(B*x)');
 opts = fitoptions( 'Method', 'NonlinearLeastSquares');
 opts.Algorithm = 'Levenberg-Marquardt';
 opts.Display = 'Off';
-ops.Robust = 'LAR';
+opts.Robust = 'LAR';
 opts.StartPoint = [0 0.02 0];
 [fitresult, gof] = fit( xData, yData, ft, opts );
  end
@@ -764,8 +882,16 @@ opts.StartPoint = [0 0];
 [fitresult, gof] = fit( xData, yData, ft, opts );
 end
 
+<<<<<<< HEAD:ANALYSIS_IVC.m
+function [fitresult, gof] = linearinterp_fit(time, elastance)
+[xData, yData] = prepareCurveData( time, elastance );
+ft = 'linearinterp';
+[fitresult, gof] = fit( xData, yData, ft, 'Normalize', 'on' );
+end
+=======
 function [fitresult, gof] = linearinter_fit(time, elastance)
 [xData, yData] = prepareCurveData( time, elastance );
 ft = 'linearinterp';
 [fitresult, gof] = fit( xData, yData, ft, 'Normalize', 'on' );
 end
+>>>>>>> 219bc06cd75134a804d8250f6c206ec54b457060:INCA_analyzer.m
